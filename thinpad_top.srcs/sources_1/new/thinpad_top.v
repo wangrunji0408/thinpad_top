@@ -130,15 +130,15 @@ SEG7_LUT segL(.oSEG1(dpy0), .iDIG(number[3:0])); //dpy0是低位数码管
 SEG7_LUT segH(.oSEG1(dpy1), .iDIG(number[7:4])); //dpy1是高位数码管
 
 reg[15:0] led_bits;
-assign leds = led_bits;
+assign leds = {cpu.d_pc[15:3], uart_dataready, uart_tbre, uart_tsre};
 
 always@(posedge clock_btn or posedge reset_btn) begin
     if(reset_btn)begin //复位按下，设置LED和数码管为初始值
-        number<=0;
+        // number<=0;
         led_bits <= 16'h1;
     end
     else begin //每次按下时钟按钮，数码管显示值加1，LED循环左移
-        number <= number+1;
+        // number <= number+1;
         led_bits <= {led_bits[14:0],led_bits[15]};
     end
 end
@@ -199,5 +199,109 @@ vga #(12, 800, 856, 976, 1040, 600, 637, 643, 666, 1, 1) vga800x600at75 (
     .data_enable(video_de)
 );
 /* =========== Demo code end =========== */
+
+reg clk25, clk12;
+
+always @(posedge clk_50M) begin
+    clk25 <= ~clk25;
+end
+always @(posedge clk25) begin
+    clk12 <= clock_btn? clk12: ~clk12;
+end
+
+wire clk = clk12;
+
+ram ram(
+    .clk(clk),
+    .addr(ram_addr),
+    .mode(ram_mode),
+    .rdata(ram_rdata),
+    .wdata(ram_wdata),
+    .ok(ram_ok),
+    .base_ram_data,  // Share with Serial [7:0]
+    .base_ram_addr,
+    .base_ram_be_n,
+    .base_ram_ce_n,  // Input from Serial
+    .base_ram_oe_n,
+    .base_ram_we_n,
+    .ext_ram_data,
+    .ext_ram_addr,
+    .ext_ram_be_n,
+    .ext_ram_ce_n,
+    .ext_ram_oe_n,
+    .ext_ram_we_n
+);
+
+serial serial(
+    .clk(clk),
+    .addr(serial_addr),
+    .mode(serial_mode),
+    .rdata(serial_rdata),
+    .wdata(serial_wdata),
+    .ok(serial_ok),
+    .uart_rdn,
+    .uart_wrn,
+    .uart_dataready,
+    .uart_tbre,
+    .uart_tsre,
+    .base_ram_data(base_ram_data[7:0]), // Share with RAM
+    .base_ram_ce_n       // Output to RAM
+);
+
+flash flash(
+    .clk(clk),
+    .rst(reset_btn),
+    .addr(flash_addr),
+    .mode(flash_mode),
+    .rdata(flash_rdata),
+    .wdata(flash_wdata),
+    .ok(flash_ok),
+    .ready(flash_ready),
+    .flash_a,
+    .flash_d,
+    .flash_rp_n,
+    .flash_vpen,
+    .flash_ce_n,
+    .flash_oe_n,
+    .flash_we_n,
+    .flash_byte_n
+);
+
+wire [31:0] ram_addr,    serial_addr,  flash_addr;
+wire [ 3:0] ram_mode,    serial_mode,  flash_mode;
+wire [31:0] ram_rdata,   serial_rdata, flash_rdata;
+wire [31:0] ram_wdata,   serial_wdata, flash_wdata;
+wire        ram_ok,      serial_ok,    flash_ok;
+wire flash_ready;
+
+CPU cpu(
+    .rst(reset_btn), 
+    .clk(~clk)
+);
+
+// IO 控制器，连接 CPU 和设备
+IOManager io(
+	.cpu_mode(cpu.io_mode),
+	.cpu_addr(cpu.io_addr),
+	.cpu_wdata(cpu.io_wdata),
+	.cpu_rdata(cpu.io_rdata),
+	.ram_mode,
+	.ram_addr,
+	.ram_wdata,
+	.ram_rdata,
+	.serial_mode,
+	.serial_addr,
+	.serial_wdata,
+	.serial_rdata
+);
+
+// debug: count read serial
+always @(posedge clk or posedge reset_btn) begin
+    if(reset_btn)
+        number <= 0;
+    else if (serial_addr[2:0] == 0 && serial_mode == 4'b0100) begin
+        number <= number + 1;
+    end
+end
 
 endmodule
