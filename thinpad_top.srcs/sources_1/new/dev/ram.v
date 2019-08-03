@@ -41,11 +41,19 @@ parameter SB  = 4'b1100;
 reg [31:0] lock_addr;
 reg [3:0]  lock_mode;
 reg [31:0] lock_wdata;
+reg [31:0] lock_base_ram_data;
+reg [31:0] lock_ext_ram_data;
 
+// 时钟上升沿 锁定输入请求
 always @(posedge clk) begin
     lock_addr <= addr;
     lock_mode <= mode;
     lock_wdata <= wdata;
+end
+// 时钟下降沿 锁定 RAM 读出数据
+always @(negedge clk) begin
+    lock_base_ram_data <= base_ram_data;
+    lock_ext_ram_data <= ext_ram_data;
 end
 
 // Decide op
@@ -86,7 +94,7 @@ assign ok = is_read || is_write;
 
 // deals with read data
 // before byte selection and extension
-wire [31:0] rdata_raw = (chip_selbase_n ? ext_ram_data : base_ram_data) >> (8 * byte_sel);
+wire [31:0] rdata_raw = (chip_selbase_n ? lock_ext_ram_data : lock_base_ram_data) >> (8 * byte_sel);
 // sign/zero extension
 assign rdata = 
     (lock_mode == LH) ? {{16{rdata_raw[15]}}, rdata_raw[15:0]} :

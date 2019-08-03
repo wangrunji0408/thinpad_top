@@ -59,7 +59,7 @@ wire [7:0] status   = {6'b0, lock_can_read, lock_can_write};
 assign uart_wrn = is_write? clk: 1;
 assign uart_rdn = ~is_read;
 assign base_ram_data = is_write? lock_wdata: {8{1'bz}};
-assign base_ram_ce_n = lock_addr == 0 && lock_mode != NOP; // As short as possible!
+assign base_ram_ce_n = lock_mode != NOP; // As short as possible!
 
 wire [7:0] rdata_raw = 
     is_test? status: 
