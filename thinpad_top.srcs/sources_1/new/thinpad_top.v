@@ -80,35 +80,6 @@ module thinpad_top(
     output wire video_de           //行数据有效信号，用于区分消隐区
 );
 
-
-/* =========== Demo code begin =========== */
-
-// PLL分频示例
-wire locked, clk_25M, clk_25M_90;
-//                 +-----+     +-----
-// clk_25M       --+     +-----+
-//                    +-----+     +--
-// clk_25M_90    -----+     +-----+
-
-pll_example clock_gen 
- (
-  // Clock out ports
-  .clk_out1(clk_25M), // 时钟输出1，频率在IP配置界面中设置
-  .clk_out2(clk_25M_90), // 时钟输出2，频率在IP配置界面中设置
-  // Status and control signals
-  .reset(reset_btn), // PLL复位输入
-  .locked(locked), // 锁定输出，"1"表示时钟稳定，可作为后级电路复位
- // Clock in ports
-  .clk_in1(clk_50M) // 外部时钟输入
- );
-
-reg rst;
-// 异步复位，同步释放
-always@(posedge clk_25M or negedge locked) begin
-    if(~locked) rst <= 1'b1;
-    else        rst <= 1'b0;
-end
-
 // 数码管连接关系示意图，dpy1同理
 // p=dpy0[0] // ---a---
 // c=dpy0[1] // |     |
@@ -121,175 +92,74 @@ end
 //           // ---d---  p
 
 // 7段数码管译码器演示，将number用16进制显示在数码管上面
-reg[7:0] number;
 SEG7_LUT segL(.oSEG1(dpy0), .iDIG(number[3:0])); //dpy0是低位数码管
 SEG7_LUT segH(.oSEG1(dpy1), .iDIG(number[7:4])); //dpy1是高位数码管
 
-reg[15:0] led_bits;
-assign leds = {cpu.d_pc[15:3], uart_dataready, uart_tbre, uart_tsre};
+// 输入信号
+wire rst = reset_btn;
+wire clk = clock_btn;
+wire opcode = dip_sw[31:26];
+wire func = dip_sw[5:0];
+wire showctrl = touch_btn[0];
+wire alu_zero = touch_btn[1];
+wire alu_sign = touch_btn[2];
 
-always@(posedge clock_btn or posedge reset_btn) begin
-    if(reset_btn)begin //复位按下，设置LED和数码管为初始值
-        // number<=0;
-        led_bits <= 16'h1;
-    end
-    else begin //每次按下时钟按钮，数码管显示值加1，LED循环左移
-        // number <= number+1;
-        led_bits <= {led_bits[14:0],led_bits[15]};
+// 输出信号
+reg[15:0] led;
+assign leds = led;
+wire[7:0] number = show_state;
+
+// 多周期控制器
+Controller ctrl(
+    .rst,
+    .clk,
+    .opcode,
+    .func,
+    .alu_zero,
+    .alu_sign
+);
+
+// 显示状态控制
+reg[1:0] show_state;
+parameter S_PC = 0, S_ALU = 1, S_MEM = 2, S_REG = 3;
+
+reg last_showctrl;
+always @(posedge clk_50M) begin
+    last_showctrl <= showctrl;
+end
+
+always @(posedge clk_50M or posedge rst) begin
+    if(rst) begin
+        show_state <= 0;
+    end else if(showctrl && ~last_showctrl) begin
+        show_state <= show_state + 1;
     end
 end
 
-//直连串口接收发送演示，从直连串口收到的数据再发送出去
-wire [7:0] ext_uart_rx;
-reg  [7:0] ext_uart_buffer, ext_uart_tx;
-wire ext_uart_ready, ext_uart_busy;
-reg ext_uart_start, ext_uart_avai;
-
-async_receiver #(.ClkFrequency(50000000),.Baud(9600)) //接收模块，9600无检验位
-    ext_uart_r(
-        .clk(clk_50M),                       //外部时钟信号
-        .RxD(rxd),                           //外部串行信号输入
-        .RxD_data_ready(ext_uart_ready),  //数据接收到标志
-        .RxD_clear(ext_uart_ready),       //清除接收标志
-        .RxD_data(ext_uart_rx)             //接收到的一字节数据
-    );
-    
-always @(posedge clk_50M) begin //接收到缓冲区ext_uart_buffer
-    if(ext_uart_ready)begin
-        ext_uart_buffer <= ext_uart_rx;
-        ext_uart_avai <= 1;
-    end else if(!ext_uart_busy && ext_uart_avai)begin 
-        ext_uart_avai <= 0;
-    end
-end
-always @(posedge clk_50M) begin //将缓冲区ext_uart_buffer发送出去
-    if(!ext_uart_busy && ext_uart_avai)begin 
-        ext_uart_tx <= ext_uart_buffer;
-        ext_uart_start <= 1;
-    end else begin 
-        ext_uart_start <= 0;
-    end
-end
-
-async_transmitter #(.ClkFrequency(50000000),.Baud(9600)) //发送模块，9600无检验位
-    ext_uart_t(
-        .clk(clk_50M),                  //外部时钟信号
-        .TxD(txd),                      //串行信号输出
-        .TxD_busy(ext_uart_busy),       //发送器忙状态指示
-        .TxD_start(ext_uart_start),    //开始发送信号
-        .TxD_data(ext_uart_tx)        //待发送的数据
-    );
-
-//图像输出演示，分辨率800x600@75Hz，像素时钟为50MHz
-wire [11:0] hdata;
-assign video_red = hdata < 266 ? 3'b111 : 0; //红色竖条
-assign video_green = hdata < 532 && hdata >= 266 ? 3'b111 : 0; //绿色竖条
-assign video_blue = hdata >= 532 ? 2'b11 : 0; //蓝色竖条
-assign video_clk = clk_50M;
-vga #(12, 800, 856, 976, 1040, 600, 637, 643, 666, 1, 1) vga800x600at75 (
-    .clk(clk_50M), 
-    .hdata(hdata), //横坐标
-    .vdata(),      //纵坐标
-    .hsync(video_hsync),
-    .vsync(video_vsync),
-    .data_enable(video_de)
-);
-/* =========== Demo code end =========== */
-
-wire clk_cpu = clk_25M;
-wire clk_io = clk_25M_90;
-
-ram ram(
-    .clk(clk_io),
-    .addr(ram_addr),
-    .mode(ram_mode),
-    .rdata(ram_rdata),
-    .wdata(ram_wdata),
-    .ok(ram_ok),
-    .base_ram_data,  // Share with Serial [7:0]
-    .base_ram_addr,
-    .base_ram_be_n,
-    .base_ram_ce_n,  // Input from Serial
-    .base_ram_oe_n,
-    .base_ram_we_n,
-    .ext_ram_data,
-    .ext_ram_addr,
-    .ext_ram_be_n,
-    .ext_ram_ce_n,
-    .ext_ram_oe_n,
-    .ext_ram_we_n
-);
-
-serial serial(
-    .clk(clk_io),
-    .addr(serial_addr),
-    .mode(serial_mode),
-    .rdata(serial_rdata),
-    .wdata(serial_wdata),
-    .ok(serial_ok),
-    .uart_rdn,
-    .uart_wrn,
-    .uart_dataready,
-    .uart_tbre,
-    .uart_tsre,
-    .base_ram_data(base_ram_data[7:0]), // Share with RAM
-    .base_ram_ce_n       // Output to RAM
-);
-
-flash flash(
-    .clk(clk_io),
-    .rst(rst),
-    .addr(flash_addr),
-    .mode(flash_mode),
-    .rdata(flash_rdata),
-    .wdata(flash_wdata),
-    .ok(flash_ok),
-    .ready(flash_ready),
-    .flash_a,
-    .flash_d,
-    .flash_rp_n,
-    .flash_vpen,
-    .flash_ce_n,
-    .flash_oe_n,
-    .flash_we_n,
-    .flash_byte_n
-);
-
-wire [31:0] ram_addr,    serial_addr,  flash_addr;
-wire [ 3:0] ram_mode,    serial_mode,  flash_mode;
-wire [31:0] ram_rdata,   serial_rdata, flash_rdata;
-wire [31:0] ram_wdata,   serial_wdata, flash_wdata;
-wire        ram_ok,      serial_ok,    flash_ok;
-wire flash_ready;
-
-MultiCycleCPU cpu(
-    .rst(rst), 
-    .clk(clk_cpu)
-);
-
-// IO 控制器，连接 CPU 和设备
-IOManager io(
-	.cpu_mode(cpu.io_mode),
-	.cpu_addr(cpu.io_addr),
-	.cpu_wdata(cpu.io_wdata),
-	.cpu_rdata(cpu.io_rdata),
-	.ram_mode,
-	.ram_addr,
-	.ram_wdata,
-	.ram_rdata,
-	.serial_mode,
-	.serial_addr,
-	.serial_wdata,
-	.serial_rdata
-);
-
-// debug: count read serial
-always @(posedge clk_io or posedge rst) begin
-    if(rst)
-        number <= 0;
-    else if (serial_addr[2:0] == 0 && serial_mode == 4'b0100) begin
-        number <= number + 1;
-    end
+// 输出控制
+always @(*) begin
+    led <= 0;
+    case (show_state)
+        S_PC: begin
+            led[15] <= ctrl.write_pc;
+            led[11] <= ctrl.pc_src;
+        end 
+        S_ALU: begin
+            led[15:13] <= ctrl.alu_op;
+            led[11] <= ctrl.alu_src_a[0];
+            led[7:6] <= ctrl.alu_src_b;
+        end
+        S_MEM: begin
+            led[15:12] <= ctrl.mem_mode;
+            led[7] <= ctrl.write_ir;
+            led[3] <= ctrl.mem_to_reg;
+        end
+        S_REG: begin
+            led[15] <= ctrl.reg_write;
+            led[12:11] <= ctrl.reg_dst;
+            led[7] <= ctrl.i_or_d;
+        end
+    endcase
 end
 
 endmodule

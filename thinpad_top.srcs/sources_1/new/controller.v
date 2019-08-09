@@ -95,7 +95,7 @@ always @(*) begin
                     end
                 end
                 `OP_BEQ, `OP_BNE, `OP_BGTZ, `OP_BLEZ: begin
-                    // ALU：PC + sign_ext(imme) x 4 
+                    // ALU: PC + sign_ext(imme) x 4 
                     alu_op <= `ALU_ADD;
                     alu_src_a <= `ALU_SRC_A_PC;
                     alu_src_b <= `ALU_SRC_B_IMMEx4; 
@@ -108,6 +108,7 @@ always @(*) begin
             case (opcode)
                 `OP_BEQ, `OP_BNE, `OP_BGTZ, `OP_BLEZ: begin
                     next_state <= `S_IF;
+                    // ALU: A - B
                     alu_op <= `ALU_SUB;
                     if( opcode == `OP_BEQ && alu_zero
                     ||  opcode == `OP_BNE && ~alu_zero
