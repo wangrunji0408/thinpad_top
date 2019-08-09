@@ -262,7 +262,7 @@ wire [31:0] ram_wdata,   serial_wdata, flash_wdata;
 wire        ram_ok,      serial_ok,    flash_ok;
 wire flash_ready;
 
-CPU cpu(
+MultiCycleCPU cpu(
     .rst(rst), 
     .clk(clk_cpu)
 );
